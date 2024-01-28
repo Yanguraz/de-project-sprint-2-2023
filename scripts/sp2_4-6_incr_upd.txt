@@ -49,7 +49,7 @@ dwh_delta_insert_result AS ( -- делаем расчёт витрины по н
             T4.avg_price_customer AS avg_price_customer,
             T4.median_time_order_completed AS median_time_order_completed,
             T4.product_type AS top_product_category,
-            T4.craftsman_name as top_craftsman
+            T4.craftsman_name as top_craftsman,
             T4.count_order_created AS count_order_created,
             T4.count_order_in_progress AS count_order_in_progress,
             T4.count_order_delivery AS count_order_delivery,
@@ -91,6 +91,7 @@ dwh_delta_insert_result AS ( -- делаем расчёт витрины по н
                                             FROM dwh_delta AS dd
                                                 GROUP BY dd.customer_id, dd.product_type
                                                     ORDER BY count_product DESC) AS T3 ON T2.customer_id = T3.customer_id_for_product_type
+                                                    
                                 INNER JOIN (
                                     SELECT     -- Эта выборка поможет определить самый популярного мастера ручной работы.
                                             td.order_id AS order_id_for_craftsman, 
