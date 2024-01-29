@@ -97,10 +97,10 @@ dwh_delta_insert_result AS ( -- делаем расчёт витрины по н
                                             td.order_id AS order_id_for_craftsman, 
                                             td.craftsman_name,
                                             td.customer_id,
-                                            COUNT(dd.order_id) AS count_order
+                                            COUNT(dd.order_id) AS count_order_in
                                             FROM dwh_delta AS td
                                                 GROUP BY td.craftsman_name, td.customer_id
-                                                    ORDER BY count_order DESC) AS T33 ON T2.customer_id = T33.customer_id
+                                                    ORDER BY count_order_in DESC) AS T33 ON T2.customer_id = T33.customer_id
                                
                                
                                
@@ -119,12 +119,13 @@ dwh_delta_update_result AS ( -- делаем перерасчёт для сущ�
             T4.platform_money AS platform_money,
             T4.count_order AS count_order,
             T4.avg_price_customer AS avg_price_customer,
-            T4.product_type AS top_product_category,
             T4.median_time_order_completed AS median_time_order_completed,
+            T4.product_type AS top_product_category,
+            T4.craftsman_name as top_craftsman,
             T4.count_order_created AS count_order_created,
             T4.count_order_in_progress AS count_order_in_progress,
-            T4.count_order_delivery AS count_order_delivery, 
-            T4.count_order_done AS count_order_done, 
+            T4.count_order_delivery AS count_order_delivery,
+            T4.count_order_done AS count_order_done,
             T4.count_order_not_done AS count_order_not_done,
             T4.report_period AS report_period 
             FROM (
@@ -186,17 +187,17 @@ dwh_delta_update_result AS ( -- делаем перерасчёт для сущ�
                                             td.order_id AS order_id_for_craftsman, 
                                             td.craftsman_name,
                                             td.customer_id,
-                                            COUNT(dd.order_id) AS count_order
+                                            COUNT(dd.order_id) AS count_order_in
                                             FROM dwh_delta AS td
                                                 GROUP BY td.craftsman_name, td.customer_id
-                                                    ORDER BY count_order DESC) AS T33 ON T2.customer_id = T33.customer_id
+                                                    ORDER BY count_order_in DESC) AS T33 ON T2.customer_id = T33.customer_id
                                
                              
                 ) AS T4 WHERE T4.rank_count_product = 1 and T4.rank_count_order = 1 ORDER BY report_period -- условие помогает оставить в выборке первую по популярности категорию товаров
 ),
 
 insert_delta AS ( -- выполняем insert новых расчитанных данных для витрины 
-    INSERT INTO dwh.customer_report_datamart (
+			INSERT INTO dwh.customer_report_datamart (
 			customer_id,
 			customer_name,
 			customer_address,
@@ -287,13 +288,6 @@ insert_load_date AS ( -- делаем запись в таблицу загру�
                     COALESCE(MAX(products_load_dttm), NOW())) 
         FROM dwh_delta
 )
-SELECT 'increment datamart'; -- инициализируем запрос CTE
-
-
-
-
-
-
-
+SELECT 'increment datamart';-- инициализируем запрос CTE
 
 
