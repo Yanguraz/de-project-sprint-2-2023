@@ -1,3 +1,4 @@
+
 WITH
 dwh_delta AS ( -- определяем, какие данные были изменены в витрине или добавлены в DWH. Формируем дельту изменений
     SELECT     
@@ -6,6 +7,7 @@ dwh_delta AS ( -- определяем, какие данные были изм�
             dcs.customer_address AS customer_address,
             dcs.customer_birthday AS customer_birthday,
             dcs.customer_email AS customer_email,
+            dc.craftsman_name,
             fo.order_id AS order_id,
             dp.product_id AS product_id,
             dp.product_price AS product_price,
@@ -21,13 +23,12 @@ dwh_delta AS ( -- определяем, какие данные были изм�
                 INNER JOIN dwh.d_craftsman dc ON fo.craftsman_id = dc.craftsman_id 
                 INNER JOIN dwh.d_customer dcs ON fo.customer_id = dcs.customer_id 
                 INNER JOIN dwh.d_product dp ON fo.product_id = dp.product_id 
-                LEFT JOIN dwh.customer_report_datamart crd ON dc.craftsman_id = crd.craftsman_id
+                LEFT JOIN dwh.customer_report_datamart crd ON dcs.customer_id = crd.customer_id
                     WHERE (fo.load_dttm > (SELECT COALESCE(MAX(load_dttm),'1900-01-01') FROM dwh.load_dates_customer_report_datamart)) OR
                             (dc.load_dttm > (SELECT COALESCE(MAX(load_dttm),'1900-01-01') FROM dwh.load_dates_customer_report_datamart)) OR
                             (dcs.load_dttm > (SELECT COALESCE(MAX(load_dttm),'1900-01-01') FROM dwh.load_dates_customer_report_datamart)) OR
                             (dp.load_dttm > (SELECT COALESCE(MAX(load_dttm),'1900-01-01') FROM dwh.load_dates_customer_report_datamart))
 ),
-
 
 dwh_update_delta AS ( -- делаем выборку заказчиков, по которым были изменения в DWH. По этим заказчикам данные в витрине нужно будет обновить
     SELECT     
@@ -70,7 +71,6 @@ dwh_delta_insert_result AS ( -- делаем расчёт витрины по н
                                 T1.customer_email AS customer_email,
                                 SUM(T1.product_price) AS customer_money,
                                 SUM(T1.product_price) * 0.1 AS platform_money,
-                                COUNT(order_id) AS count_order,
                                 AVG(T1.product_price) AS avg_price_customer,
                                 PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY diff_order_date) AS median_time_order_completed,
                                 SUM(CASE WHEN T1.order_status = 'created' THEN 1 ELSE 0 END) AS count_order_created,
@@ -94,19 +94,17 @@ dwh_delta_insert_result AS ( -- делаем расчёт витрины по н
                                                     
                                 INNER JOIN (
                                     SELECT     -- Эта выборка поможет определить самый популярного мастера ручной работы.
-                                            td.order_id AS order_id_for_craftsman, 
                                             td.craftsman_name,
-                                            td.customer_id,
-                                            COUNT(dd.order_id) AS count_order_in
+                                            td.customer_id as customer_for_craftsman,
+                                            COUNT(td.order_id) AS count_order
                                             FROM dwh_delta AS td
                                                 GROUP BY td.craftsman_name, td.customer_id
-                                                    ORDER BY count_order_in DESC) AS T33 ON T2.customer_id = T33.customer_id
+                                                    ORDER BY count_order DESC) AS T33 ON T2.customer_id = T33.customer_for_craftsman
                                
                                
                                
                 ) AS T4 WHERE T4.rank_count_product = 1 and T4.rank_count_order = 1 ORDER BY report_period -- условие помогает оставить в выборке первую по популярности категорию товаров
 ),
-
 
 dwh_delta_update_result AS ( -- делаем перерасчёт для существующих записей витринs, так как данные обновились за отчётные периоды. Логика похожа на insert, но нужно достать конкретные данные из DWH
     SELECT 
@@ -131,7 +129,7 @@ dwh_delta_update_result AS ( -- делаем перерасчёт для сущ�
             FROM (
                 SELECT     -- в этой выборке объединяем две внутренние выборки по расчёту столбцов витрины и применяем оконную функцию для определения самой популярной категории товаров
                         *,
-                        RANK() OVER(PARTITION BY T2.craftsman_id ORDER BY count_product DESC) AS rank_count_product, 
+                        RANK() OVER(PARTITION BY T2.customer_id ORDER BY count_product DESC) AS rank_count_product, 
                         ROW_NUMBER () OVER(PARTITION BY T2.customer_id ORDER BY count_order DESC) AS rank_count_order 
                         FROM (
                             SELECT -- в этой выборке делаем расчёт по большинству столбцов, так как все они требуют одной и той же группировки, кроме столбца с самой популярной категорией товаров у мастера. Для этого столбца сделаем отдельную выборку с другой группировкой и выполним JOIN
@@ -139,10 +137,9 @@ dwh_delta_update_result AS ( -- делаем перерасчёт для сущ�
                                 T1.customer_name AS customer_name,
                                 T1.customer_address AS customer_address,
                                 T1.customer_birthday AS customer_birthday,
-                                T1.cutomer_email AS customer_email,
+                                T1.customer_email AS customer_email,
                                 SUM(T1.product_price) AS customer_money,
                                 SUM(T1.product_price) * 0.1 AS platform_money,
-                                COUNT(order_id) AS count_order,
                                 AVG(T1.product_price) AS avg_price_customer,
                                 PERCENTILE_CONT(0.5) WITHIN GROUP(ORDER BY diff_order_date) AS median_time_order_completed,
                                 SUM(CASE WHEN T1.order_status = 'created' THEN 1 ELSE 0 END) AS count_order_created, 
@@ -184,17 +181,16 @@ dwh_delta_update_result AS ( -- делаем перерасчёт для сущ�
                                                     
                              INNER JOIN (
                                     SELECT     -- Эта выборка поможет определить самый популярного мастера ручной работы.
-                                            td.order_id AS order_id_for_craftsman, 
                                             td.craftsman_name,
-                                            td.customer_id,
-                                            COUNT(dd.order_id) AS count_order_in
+                                             td.customer_id as customer_for_craftsman,
+                                            COUNT(td.order_id) AS count_order
                                             FROM dwh_delta AS td
                                                 GROUP BY td.craftsman_name, td.customer_id
-                                                    ORDER BY count_order_in DESC) AS T33 ON T2.customer_id = T33.customer_id
+                                                    ORDER BY count_order DESC) AS T33 ON T2.customer_id = T33.customer_for_craftsman
                                
                              
                 ) AS T4 WHERE T4.rank_count_product = 1 and T4.rank_count_order = 1 ORDER BY report_period -- условие помогает оставить в выборке первую по популярности категорию товаров
-),
+                ),
 
 insert_delta AS ( -- выполняем insert новых расчитанных данных для витрины 
 			INSERT INTO dwh.customer_report_datamart (
@@ -238,7 +234,7 @@ insert_delta AS ( -- выполняем insert новых расчитанных
             FROM dwh_delta_insert_result
 ),
 update_delta AS ( -- выполняем обновление показателей в отчёте по уже существующим мастерам
-    UPDATE dwh.craftsman_report_datamart SET
+    UPDATE dwh.customer_report_datamart SET
         customer_name = updates.customer_name, 
 		customer_address = updates.customer_address,
 		customer_birthday = updates.customer_birthday,
@@ -255,7 +251,7 @@ update_delta AS ( -- выполняем обновление показател�
 		count_order_delivery = updates.count_order_delivery,
 		count_order_done = updates.count_order_done,
 		count_order_not_done = updates.count_order_not_done,
-		report_period
+		report_period=updates.report_period
     FROM (
         SELECT 
 			customer_id,
@@ -277,7 +273,7 @@ update_delta AS ( -- выполняем обновление показател�
 			count_order_not_done,
 			report_period
             FROM dwh_delta_update_result) AS updates
-    WHERE dwh.customer_report_datamart.craftsman_id = updates.customer_id
+    WHERE dwh.customer_report_datamart.customer_id = updates.customer_id
 ),
 insert_load_date AS ( -- делаем запись в таблицу загрузок о том, когда была совершена загрузка, чтобы в следующий раз взять данные, которые будут добавлены или изменены после этой даты
     INSERT INTO dwh.load_dates_customer_report_datamart (
@@ -288,6 +284,4 @@ insert_load_date AS ( -- делаем запись в таблицу загру�
                     COALESCE(MAX(products_load_dttm), NOW())) 
         FROM dwh_delta
 )
-SELECT 'increment datamart';-- инициализируем запрос CTE
-
-
+SELECT 'increment datamart'
